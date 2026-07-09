@@ -1,0 +1,12 @@
+{
+  "version": "v1",
+  "hooks": [{
+    "name": "Recordar crear tests",
+    "trigger": "PostFileCreate",
+    "matcher": "src/.*\\.js$",
+    "action": {
+      "type": "agent",
+      "prompt": "Se ha creado un nuevo archivo en src/. Recuerda al usuario que debe crear el test correspondiente en la carpeta tests/ siguiendo el patron: tests/<nombre>.test.js"
+    }
+  }]
+}

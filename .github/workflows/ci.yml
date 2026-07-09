@@ -1,0 +1,57 @@
+# CI Pipeline - Continuous Integration
+# Este workflow se ejecuta en cada push a main y en cada pull request
+# Ejecuta linting, tests y build en múltiples versiones de Node.js usando matrix
+
+name: CI Pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+
+    # Strategy matrix para probar en Node.js 18 y 20
+    strategy:
+      matrix:
+        node-version: [18, 20]
+
+    steps:
+      # Checkout del código fuente
+      - name: Checkout del código
+        uses: actions/checkout@v4
+
+      # Configuración de Node.js (variable matrix)
+      - name: Configurar Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      # Caching de node_modules para acelerar ejecuciones
+      - name: Caché de node_modules
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-node-${{ matrix.node-version }}-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-${{ matrix.node-version }}-
+            ${{ runner.os }}-node-
+
+      # Instalación de dependencias
+      - name: Instalar dependencias
+        run: npm ci
+
+      # Ejecución de linting
+      - name: Linting
+        run: npm run lint
+
+      # Ejecución de tests
+      - name: Tests
+        run: npm run test
+
+      # Ejecución de build
+      - name: Build
+        run: npm run build

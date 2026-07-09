@@ -1,0 +1,178 @@
+# PR Validation - Validación de Pull Requests
+# Este workflow se ejecuta solo en pull requests
+# Valida conventional commits, tests con cobertura y añade labels automáticas
+
+name: PR Validation
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  validate-pr:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Checkout del código fuente
+      - name: Checkout del código
+        uses: actions/checkout@v4
+
+      # Validar que el título del PR siga Conventional Commits
+      - name: Validar formato del título del PR
+        id: validate-title
+        uses: amannn/action-semantic-pull-request@v5
+        with:
+          types: |
+            feat
+            fix
+            docs
+            style
+            refactor
+            perf
+            test
+            build
+            ci
+            chore
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Configurar Node.js 20
+      - name: Configurar Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # Caching de node_modules
+      - name: Caché de node_modules
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-node-20-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-20-
+            ${{ runner.os }}-node-
+
+      # Instalar dependencias
+      - name: Instalar dependencias
+        run: npm ci
+
+      # Ejecutar tests con cobertura
+      - name: Tests con cobertura
+        id: test
+        run: npm run test -- --coverage
+        continue-on-error: true
+
+      # Verificar cobertura mínima del 80%
+      - name: Verificar cobertura mínima (80%)
+        id: coverage-check
+        run: |
+          COVERAGE=$(cat coverage/lcov.info | grep -E "^SF:" | head -1 | wc -l)
+          LINES_COVERED=$(grep -E "^LH" coverage/lcov.info | awk '{sum+=$2} END {print sum}')
+          LINES_TOTAL=$(grep -E "^LF" coverage/lcov.info | awk '{sum+=$2} END {print sum}')
+          
+          if [ "$LINES_TOTAL" -gt 0 ]; then
+            COVERAGE_PCT=$((LINES_COVERED * 100 / LINES_TOTAL))
+            echo "Cobertura actual: ${COVERAGE_PCT}%"
+            echo "cobertura_pct=${COVERAGE_PCT}" >> $GITHUB_OUTPUT
+            
+            if [ "$COVERAGE_PCT" -lt 80 ]; then
+              echo "La cobertura de tests (${COVERAGE_PCT}%) es menor al 80% requerido."
+              exit 1
+            fi
+          else
+            echo "No se encontraron archivos de cobertura."
+            exit 1
+          fi
+
+      # Agregar comentario automático con resumen de cobertura
+      - name: Comentar resumen de cobertura en el PR
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const coverage_pct = process.env.COVERAGE_PCT || 'N/A';
+            const status = process.env.COVERAGE_STATUS || 'unknown';
+            
+            const comment = `## 📊 Resumen de Cobertura de Tests\n\n` +
+              `| Métrica | Valor |\n` +
+              `|---------|-------|\n` +
+              `| Cobertura | ${coverage_pct}% |\n` +
+              `| Estado | ${status === 'success' ? '✅ Pass' : '⚠️ Needs Attention'} |\n\n` +
+              `**Nota:** Se requiere un mínimo del 80% de cobertura.`;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+
+      # Aplicar labels automáticas según archivos modificados
+      - name: Obtener archivos modificados
+        id: files
+        uses: amannn/action-diff@v4
+        with:
+          base: ${{ github.event.pull_request.base.sha }}
+          head: ${{ github.event.pull_request.head.sha }}
+
+      # Aplicar label según el tipo de cambio
+      - name: Aplicar label según tipo de cambio
+        id: label
+        if: steps.files.outputs.files != ''
+        run: |
+          FILES="${{ steps.files.outputs.files }}"
+          
+          # Determinar tipo de cambio basado en archivos modificados
+          if echo "$FILES" | grep -qE '\.(ts|js|tsx|jsx)$'; then
+            echo "label=code" >> $GITHUB_OUTPUT
+          elif echo "$FILES" | grep -qE '\.md$'; then
+            echo "label=docs" >> $GITHUB_OUTPUT
+          elif echo "$FILES" | grep -qE '\.(json|yml|yaml)$'; then
+            echo "label=configuration" >> $GITHUB_OUTPUT
+          elif echo "$FILES" | grep -qE 'test'; then
+            echo "label=tests" >> $GITHUB_OUTPUT
+          else
+            echo "label=other" >> $GITHUB_OUTPUT
+          fi
+
+      # Crear label si no existe y aplicarla
+      - name: Crear y aplicar label
+        if: steps.label.outputs.label != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "${{ steps.label.outputs.label }}";
+            
+            // Verificar si la label ya existe
+            const labels = await github.rest.issues.listLabelsOnIssue({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo
+            });
+            
+            const labelExists = labels.data.some(l => l.name === label);
+            
+            if (!labelExists) {
+              // Crear label si no existe
+              try {
+                await github.rest.issues.createLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  name: label,
+                  color: 'FFFFFF',
+                  description: `Automatically applied: ${label}`
+                });
+              } catch (e) {
+                console.log(`Label ${label} ya existe o error al crear: ${e.message}`);
+              }
+              
+              // Aplicar label al PR
+              await github.rest.issues.addLabels({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                labels: [label]
+              });
+              
+              console.log(`Label "${label}" aplicada al PR #${context.issue.number}`);
+            }

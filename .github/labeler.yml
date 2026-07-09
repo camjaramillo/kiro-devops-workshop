@@ -1,0 +1,27 @@
+# Archivo de configuración para GitHub Labeler
+# Asigna labels automáticas según los archivos modificados en el PR
+
+# Cambios en .github/ (workflows, etc.)
+ci:
+  - .github/**/*
+
+# Cambios en archivos Markdown
+docs:
+  - '*.md'
+  - docs/**/*
+
+# Cambios en tests
+tests:
+  - tests/**/*
+
+# Cambios en código fuente
+source:
+  - src/**/*
+
+# Cambios en configuración (package.json, etc.)
+configuration:
+  - package.json
+  - package-lock.json
+  - '*.json'
+  - '*.yml'
+  - '*.yaml'

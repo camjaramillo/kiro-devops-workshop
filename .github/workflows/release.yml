@@ -1,0 +1,142 @@
+# Release - Generación de versiones con GitHub Releases
+# Este workflow se dispara cuando se crea un tag con formato v*.*.*
+# Genera changelog, crea release y publica artefactos
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Checkout del código fuente con todos los tags
+      - name: Checkout del código
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.ref }}
+
+      # Configurar Node.js 20
+      - name: Configurar Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # Instalar dependencias
+      - name: Instalar dependencias
+        run: npm ci
+
+      # Generar build
+      - name: Build
+        run: npm run build
+
+      # Generar changelog automatico desde el ultimo tag
+      - name: Generar changelog
+        id: changelog
+        run: |
+          # Obtener el tag actual
+          TAG=${GITHUB_REF#refs/tags/}
+          echo "Tag actual: $TAG"
+          
+          # Obtener el ultimo tag anterior
+          LAST_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          
+          if [ -n "$LAST_TAG" ]; then
+            echo "Ultimo tag: $LAST_TAG"
+            # Generar changelog con commits entre tags
+            CHANGELOG=$(git log --pretty=format:"- %s (%h)" ${LAST_TAG}..${TAG})
+            echo "changelog<<EOF" >> $GITHUB_OUTPUT
+            echo "$CHANGELOG" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+          else
+            echo "No se encontro un tag anterior. Usando todos los commits."
+            CHANGELOG=$(git log --pretty=format:"- %s (%h)" --first-parent)
+            echo "changelog<<EOF" >> $GITHUB_OUTPUT
+            echo "$CHANGELOG" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+          fi
+
+      # Crear archivo de release con metadata
+      - name: Crear archivo de release
+        id: release-info
+        run: |
+          TAG=${GITHUB_REF#refs/tags/}
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+          
+          # Obtener fecha
+          DATE=$(date +%Y-%m-%d)
+          echo "date=${DATE}" >> $GITHUB_OUTPUT
+          
+          # Crear nombre del release
+          NAME="Release ${TAG}"
+          echo "name=${NAME}" >> $GITHUB_OUTPUT
+
+      # Crear GitHub Release
+      - name: Crear GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ steps.release-info.outputs.name }}
+          body: |
+            # ${{{ steps.release-info.outputs.tag }}}
+            
+            ### Changelog
+            ${{ steps.changelog.outputs.changelog }}
+            
+            ---            
+            *Generado automaticamente por el workflow de Release*
+          draft: false
+          prerelease: false
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      # Generar artefacto de build
+      - name: Preparar artefacto de build
+        run: |
+          # Crear directorio para artefactos si no existe
+          mkdir -p artifacts
+          
+          # Copiar archivos del build al artefacto
+          cp -r dist/* artifacts/ 2>/dev/null || true
+          cp -r lib/* artifacts/ 2>/dev/null || true
+          
+          # Si no hay directorio dist o lib, copiar archivos raiz
+          if [ ! -d "artifacts" ] || [ -z "$(ls -A artifacts 2>/dev/null)" ]; then
+            cp -r * artifacts/ 2>/dev/null || true
+          fi
+          
+          # Crear archivo zip del artefacto
+          cd artifacts
+          zip -r ../release-${{ steps.release-info.outputs.tag }}.zip . -x "*.git*" 2>/dev/null || true
+          cd ..
+          
+          # Listar artefactos generados
+          ls -la *.zip 2>/dev/null || echo "No se pudo crear zip"
+
+      # Subir artefacto como asset del release
+      - name: Subir artefacto como asset
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: |
+            *.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Notificación a Slack en caso de exito (placeholder)
+      - name: Notificar a Slack
+        if: success()
+        uses: slackapi/slack-github-action@v1.25.0
+        with:
+          webhook: ${{ secrets.CARVAJAL_SLACK_WEBHOOK }}
+          message: |
+            :tada: *Release completado con éxito!*
+            
+            *Tag:* ${{ github.ref_name }}
+            *Repositorio:* ${{ github.repository }}
+            *Commit:* ${{ github.sha }}
+            *Release:* <https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}|Ver Release>
