@@ -11,6 +11,29 @@ on:
     branches: [main]
 
 jobs:
+  # Job independiente: valida los módulos Terraform antes del CI de Node.js
+  terraform-validate:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Checkout del código fuente
+      - name: Checkout del código
+        uses: actions/checkout@v4
+
+      # Instalar Terraform
+      - name: Configurar Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '1.5.7'
+
+      # Dar permisos de ejecución al script
+      - name: Permisos de ejecución
+        run: chmod +x scripts/validate-terraform.sh
+
+      # Ejecutar validación de módulos Terraform
+      - name: Validar módulos Terraform
+        run: ./scripts/validate-terraform.sh
+
   ci:
     runs-on: ubuntu-latest
 
